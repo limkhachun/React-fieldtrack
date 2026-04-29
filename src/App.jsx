@@ -15,6 +15,16 @@ import Dashboard from './pages/Dashboard/Dashboard';
 import StaffList from './pages/Staff/StaffList';
 import StaffForm from './pages/Staff/StaffForm';
 import Attendance from './pages/Attendance/Attendance';
+import DailyTasks from './pages/DailyTasks/DailyTasks';
+import LeaveAprroval from './pages/LeaveApproval/LeaveApproval';
+import EvidenceGallery from './pages/EvidenceGallery/EvidenceGallery';
+import SchedulePlanner from './pages/SchedulePlanner/SchedulePlanner';
+/*
+
+import PayrollManagement from './pages/PayrollManagement/PayrollManagement';
+import LiveTrackingMap from './pages/LiveTrackingMap/LiveTrackingMap';
+import AdminManagement from './pages/AdminManagement/AdminManagement';
+*/
 function App() {
   return (
     <AuthProvider>
@@ -44,19 +54,10 @@ function App() {
             
             <Route path="attendance" element={<Attendance />} />
             
-            <Route path="leave" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Leave Approval Page</h3>
-                <p>正在迁移中...</p>
-              </div>
-            } />
+            <Route path="leave" element={<LeaveAprroval />} />  
+             
             
-            <Route path="schedules" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Schedule Planner Page</h3>
-                <p>正在迁移中...</p>
-              </div>
-            } />
+            <Route path="schedules" element={<SchedulePlanner />} />
             
             <Route path="payroll" element={
               <div className="container py-5 text-center text-muted">
@@ -65,12 +66,7 @@ function App() {
               </div>
             } />
             
-            <Route path="daily-tasks" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Daily Tasks Page</h3>
-                <p>正在迁移中...</p>
-              </div>
-            } />
+            <Route path="daily-tasks" element={<DailyTasks />} />
             
             <Route path="map" element={
               <div className="container py-5 text-center text-muted">
@@ -79,12 +75,7 @@ function App() {
               </div>
             } />
             
-            <Route path="gallery" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Evidence Gallery Page</h3>
-                <p>正在迁移中...</p>
-              </div>
-            } />
+            <Route path="gallery" element={<EvidenceGallery />} />
 
             {/* 权限管理页面 (仅 Admin 可见) */}
             <Route path="manage-admins" element={
