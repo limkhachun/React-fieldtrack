@@ -14,7 +14,7 @@ import Login from './pages/Login/Login';
 import Dashboard from './pages/Dashboard/Dashboard';
 import StaffList from './pages/Staff/StaffList';
 import StaffForm from './pages/Staff/StaffForm';
-
+import Attendance from './pages/Attendance/Attendance';
 function App() {
   return (
     <AuthProvider>
@@ -42,12 +42,7 @@ function App() {
             
             {/* --- 以下为其他子页面占位，路由与 Header 的 Link 一一对应 --- */}
             
-            <Route path="attendance" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Attendance Records Page</h3>
-                <p>正在迁移中...</p>
-              </div>
-            } />
+            <Route path="attendance" element={<Attendance />} />
             
             <Route path="leave" element={
               <div className="container py-5 text-center text-muted">

@@ -5,7 +5,6 @@ import { getFirestore } from "firebase/firestore";
 import { getDatabase } from "firebase/database"; // 🟢 引入实时数据库
 import { getStorage } from "firebase/storage";
 
-console.log("Vite 读取的 API Key:", import.meta.env.VITE_FIREBASE_API_KEY);
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
