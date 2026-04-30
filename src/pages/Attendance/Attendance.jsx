@@ -46,13 +46,13 @@ export default function Attendance() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // 待处理徽章计数 (由子组件向父组件汇报)[cite: 6]
+  // 待处理徽章计数 (由子组件向父组件汇报)[cite: 20]
   const [badges, setBadges] = useState({ unverified: 0, corrections: 0 });
 
-  // 批量操作所需的考勤记录缓存[cite: 6]
+  // 批量操作所需的考勤记录缓存[cite: 20]
   const [unverifiedRecords, setUnverifiedRecords] = useState([]); 
 
-  // 弹窗状态统一管理[cite: 6]
+  // 弹窗状态统一管理[cite: 20]
   const [modals, setModals] = useState({
     report: false,
     bulkVerify: false,
@@ -140,7 +140,7 @@ export default function Attendance() {
             </button>
           </div>
 
-          {/* 右侧：动作按钮 (弹窗触发器)[cite: 6] */}
+          {/* 右侧：动作按钮 (弹窗触发器)[cite: 20] */}
           <div className="d-flex gap-2">
             {viewMode === 'day' && badges.unverified > 0 && (
               <button 
@@ -194,7 +194,7 @@ export default function Attendance() {
           </li>
         </ul>
 
-        {/* 🌟 内容渲染区[cite: 6] */}
+        {/* 🌟 内容渲染区[cite: 20] */}
         <div className="tab-content pb-5">
           {activeTab === 'dashboard' && viewMode === 'day' && !isLoading && (
             <DayView 
@@ -203,7 +203,8 @@ export default function Attendance() {
               searchTerm={searchTerm} 
               setBadges={setBadges} 
               setUnverifiedRecords={setUnverifiedRecords} 
-              forceShowLogs={false} 
+              forceShowLogs={false} // Ensure detailed logs are hidden in dashboard
+              hideDetailedRecords={true} // Add a new prop to explicitly hide records
             />
           )}
 
@@ -214,7 +215,8 @@ export default function Attendance() {
                searchTerm={searchTerm} 
                setBadges={setBadges}
                setUnverifiedRecords={setUnverifiedRecords}
-               forceShowLogs={true} 
+               forceShowLogs={true} // Show logs only in the 'logs' tab
+               hideDetailedRecords={false}
              />
           )}
 
@@ -230,7 +232,7 @@ export default function Attendance() {
       </div>
 
       {/* ========================================================================= */}
-      {/* 🌟 模态框挂载区 (Modals)[cite: 6] */}
+      {/* 🌟 模态框挂载区 (Modals)[cite: 20] */}
       {/* ========================================================================= */}
       
       <MonthlyReportModal 

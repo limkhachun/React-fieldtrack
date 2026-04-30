@@ -1,11 +1,14 @@
 // src/pages/SchedulePlanner/components/ScheduleModals.jsx
 import React, { useState, useEffect } from 'react';
-import { collection, doc, writeBatch, deleteDoc, updateDoc, setDoc, Timestamp, getDoc } from 'firebase/firestore';
+import { collection, doc, writeBatch, deleteDoc, updateDoc, setDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../../services/firebase';
 import { useAuth } from '../../../context/AuthContext';
 import { 
-  X, Plus, Settings, Layers, Trash2, Edit2, Lock, Info, CheckSquare, BarChart2, Calendar 
+  X, Plus, Settings, Layers, Trash2, Edit2, Lock, Info, CheckSquare, BarChart2 
 } from 'lucide-react';
+
+// 🚨 导入审计日志记录函数
+import { logAdminAction } from '../../../utils/utils';
 
 // ============================================================================
 // 1. Day Manager Modal (单日排班管理)
@@ -66,6 +69,12 @@ function DayManagerModal({ isOpen, dateStr, filterIds, schedules, staffList, lea
         });
       });
       await batch.commit();
+
+      // 🚨 记录单日排班添加日志
+      await logAdminAction(db, currentUser, "ADD_SHIFT", "MULTIPLE", null, {
+        date: dateStr, start, end, count: staffIds.length 
+      });
+
       setFormData({ ...formData, staffIds: [] });
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
@@ -78,6 +87,10 @@ function DayManagerModal({ isOpen, dateStr, filterIds, schedules, staffList, lea
     setLoading(true);
     try {
       await deleteDoc(doc(db, "schedules", shift.id));
+
+      // 🚨 记录删除单条排班日志
+      await logAdminAction(db, currentUser, "DELETE_SHIFT", shift.userId, shift, null);
+
     } catch (e) { alert("Failed to delete."); } finally { setLoading(false); }
   };
 
@@ -249,7 +262,18 @@ function BulkModal({ isOpen, staffList, presets, leaves, schedules, onClose, ope
         }
       });
 
-      if (successCount > 0) await batch.commit();
+      if (successCount > 0) {
+        await batch.commit();
+
+        // 🚨 记录批量排班日志
+        await logAdminAction(db, currentUser, "BULK_SCHEDULE_CREATED", "MULTIPLE", null, {
+          staffCount: selectedStaff.length, 
+          totalShifts: successCount, 
+          from: sDateStr, 
+          to: eDateStr 
+        });
+      }
+
       onClose();
       alert(`✅ Scheduled ${successCount} shifts.\nSmart Feature: New joiners were only scheduled from their Join Date.`);
     } catch (e) { alert(e.message); } finally { setLoading(false); }
@@ -345,6 +369,7 @@ function BulkModal({ isOpen, staffList, presets, leaves, schedules, onClose, ope
 // 3. Preset Modal (高级预设管理)
 // ============================================================================
 function PresetModal({ isOpen, presets, onClose }) {
+  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     idx: -1, name: '',
@@ -380,6 +405,10 @@ function PresetModal({ isOpen, presets, onClose }) {
       else newArray[form.idx] = newPreset;
 
       await setDoc(doc(db, "settings", "shift_presets"), { presets: newArray });
+
+      // 🚨 记录预设操作日志
+      await logAdminAction(db, currentUser, form.idx === -1 ? "ADD_PRESET" : "EDIT_PRESET", "GLOBAL", null, newPreset);
+
       handleReset();
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
@@ -398,8 +427,12 @@ function PresetModal({ isOpen, presets, onClose }) {
     setLoading(true);
     try {
       let newArray = [...presets];
-      newArray.splice(idx, 1);
+      const deletedPreset = newArray.splice(idx, 1)[0];
       await setDoc(doc(db, "settings", "shift_presets"), { presets: newArray });
+
+      // 🚨 记录删除预设日志
+      await logAdminAction(db, currentUser, "DELETE_PRESET", "GLOBAL", deletedPreset, null);
+
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
 
@@ -478,14 +511,14 @@ function PresetModal({ isOpen, presets, onClose }) {
 // 4. Staff Analytics Modal (单人排班分析与清理)
 // ============================================================================
 function StaffAnalyticsModal({ isOpen, uid, schedules, filterDateObj, onClose, openSingleEdit }) {
+  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
 
   if (!isOpen || !uid) return null;
 
-  // 根据传入的过滤日期和UID计算对应的班次
   const userShifts = schedules.filter(s => {
     if (s.userId !== uid) return false;
-    if (!filterDateObj) return true; // Fallback
+    if (!filterDateObj) return true; 
     const sd = new Date(s.date);
     return sd >= filterDateObj.start && sd <= filterDateObj.end;
   }).sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -502,6 +535,10 @@ function StaffAnalyticsModal({ isOpen, uid, schedules, filterDateObj, onClose, o
       const batch = writeBatch(db);
       userShifts.forEach(s => batch.delete(doc(db, "schedules", s.id)));
       await batch.commit();
+
+      // 🚨 记录批量删除该员工班次的日志
+      await logAdminAction(db, currentUser, "BULK_DELETE_STAFF_SHIFTS", uid, null, { deletedCount: userShifts.length });
+
       onClose();
     } catch (e) { alert("Failed to clear shifts: " + e.message); } finally { setLoading(false); }
   };
@@ -566,6 +603,7 @@ function StaffAnalyticsModal({ isOpen, uid, schedules, filterDateObj, onClose, o
 // 5. Edit Single Shift Modal (编辑单个班次)
 // ============================================================================
 function EditSingleShiftModal({ isOpen, shiftId, schedules, onClose }) {
+  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ start: '', end: '', breakMins: 0 });
 
@@ -590,11 +628,17 @@ function EditSingleShiftModal({ isOpen, shiftId, schedules, onClose }) {
       const sDT = new Date(`${shift.date}T${formData.start}:00`);
       const eDT = new Date(`${shift.date}T${formData.end}:00`);
 
-      await updateDoc(doc(db, "schedules", shiftId), {
+      const newData = {
         start: Timestamp.fromDate(sDT),
         end: Timestamp.fromDate(eDT),
         breakMins: parseInt(formData.breakMins) || 0
-      });
+      };
+
+      await updateDoc(doc(db, "schedules", shiftId), newData);
+
+      // 🚨 记录单次编辑日志
+      await logAdminAction(db, currentUser, "EDIT_SINGLE_SHIFT", shift.userId, { oldStart: shift.start, oldEnd: shift.end }, newData);
+
       onClose();
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
@@ -635,6 +679,7 @@ function EditSingleShiftModal({ isOpen, shiftId, schedules, onClose }) {
 // 6. List Edit Modal (列表视图下的批量时间编辑)
 // ============================================================================
 function ListEditModal({ isOpen, selectedIds, schedules, onClose, onClearSelection }) {
+  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ start: '', end: '' });
 
@@ -645,15 +690,25 @@ function ListEditModal({ isOpen, selectedIds, schedules, onClose, onClearSelecti
     setLoading(true);
     try {
       const batch = writeBatch(db);
+      let editCount = 0;
+
       selectedIds.forEach(id => {
         const sh = schedules.find(x => x.id === id);
         if (sh && !sh.clockIn) {
           const st = new Date(`${sh.date}T${formData.start}:00`);
           const et = new Date(`${sh.date}T${formData.end}:00`);
           batch.update(doc(db, "schedules", id), { start: Timestamp.fromDate(st), end: Timestamp.fromDate(et) });
+          editCount++;
         }
       });
+
       await batch.commit();
+
+      if (editCount > 0) {
+        // 🚨 记录批量修改日志
+        await logAdminAction(db, currentUser, "BULK_EDIT_SHIFTS", "MULTIPLE", { count: editCount }, { newStart: formData.start, newEnd: formData.end });
+      }
+
       onClearSelection();
       onClose();
     } catch (e) { alert(e.message); } finally { setLoading(false); }

@@ -9,6 +9,7 @@ import {
   doc 
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
+import { useAuth } from '../../context/AuthContext'; // 🚨 需要获取 currentUser
 import { 
   ClipboardList, 
   Search, 
@@ -18,11 +19,15 @@ import {
   ArrowUp, 
   ArrowDown, 
   User, 
-  Inbox,
-  AlertCircle
+  Inbox 
 } from 'lucide-react';
 
+// 🚨 导入审计日志记录函数
+import { logAdminAction } from '../../utils/utils'; 
+
 export default function DailyTasks() {
+  const { currentUser } = useAuth(); // 🚨 获取当前操作管理员
+
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -73,7 +78,7 @@ export default function DailyTasks() {
       return matchName && matchDate;
     });
 
-    // 排序逻辑[cite: 9]
+    // 排序逻辑[cite: 33]
     result.sort((a, b) => {
       let valA = a[sortConfig.key];
       let valB = b[sortConfig.key];
@@ -117,6 +122,7 @@ export default function DailyTasks() {
     setSortConfig({ key: 'date', direction: 'desc' });
   };
 
+  // 🚨 核心修改点：加入审计日志
   const handleMarkRead = async () => {
     const unreadTasks = tasks.filter(t => t.isRead === false);
     if (unreadTasks.length === 0) return alert("No unread tasks to mark.");
@@ -125,11 +131,21 @@ export default function DailyTasks() {
       setActionLoading(true);
       try {
         const batch = writeBatch(db);
+        const taskIds = []; // 收集受影响的 ID 以存入日志
+
         unreadTasks.forEach(task => {
           const taskRef = doc(db, 'daily_tasks', task.id);
           batch.update(taskRef, { isRead: true });
+          taskIds.push(task.id);
         });
+
         await batch.commit();
+
+        // 🚨 写入审计日志[cite: 33]
+        await logAdminAction(db, currentUser, "MARK_DAILY_TASKS_READ", "MULTIPLE", null, {
+          markedCount: unreadTasks.length,
+          taskIds: taskIds
+        });
         
         // 本地状态同步
         setTasks(prev => prev.map(t => ({ ...t, isRead: true })));
@@ -218,7 +234,7 @@ export default function DailyTasks() {
         </div>
       </div>
 
-      {/* 数据表格[cite: 8, 9] */}
+      {/* 数据表格[cite: 33] */}
       <div className="card border-0 shadow-sm rounded-4">
         <div className="card-body p-0">
           <div className="table-responsive">

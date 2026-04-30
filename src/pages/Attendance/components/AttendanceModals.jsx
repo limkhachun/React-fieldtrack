@@ -11,15 +11,18 @@ import {
   X, Info, Save, Search, Star 
 } from 'lucide-react';
 
+// 🚨 导入审计日志记录函数 (请根据您项目的实际路径进行修改)
+import { logAdminAction } from '../../../utils/utils'; 
+
 // ============================================================================
 // 1. Bulk Verify Modal (批量一键验证 - 矩阵视图版)
 // ============================================================================
 export function BulkVerifyModal({ isOpen, records, onClose, onSuccess }) {
+  const { currentUser } = useAuth(); // 🚨 获取 currentUser 以便记录日志
   const [loading, setLoading] = useState(false);
 
   if (!isOpen || records.length === 0) return null;
 
-  // 【核心增强】将扁平的记录列表按员工分组，构建矩阵视图数据[cite: 1, 7]
   const groupedData = records.reduce((acc, r) => {
     if (!acc[r.uid]) {
       acc[r.uid] = {
@@ -40,9 +43,19 @@ export function BulkVerifyModal({ isOpen, records, onClose, onSuccess }) {
         batch.update(doc(db, "attendance", r.id), { verificationStatus: "Verified" });
       });
       await batch.commit();
+
+      // 🚨 写入审计日志
+      await logAdminAction(db, currentUser, "BULK_VERIFY", "MULTIPLE", null, { 
+        verifiedCount: records.length 
+      });
+
       onSuccess();
       onClose();
-    } catch (e) { alert(e.message); } finally { setLoading(false); }
+    } catch (e) { 
+      alert(e.message); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   return (
@@ -104,16 +117,13 @@ export function BulkVerifyModal({ isOpen, records, onClose, onSuccess }) {
 // ============================================================================
 // 2. Bulk Manual Action Modal (批量补卡 - 智能过滤版)
 // ============================================================================
-// src/pages/Attendance/components/AttendanceModals.jsx
-
-// src/pages/Attendance/components/AttendanceModals.jsx
-
 export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
+  const { currentUser } = useAuth(); // 🚨 获取 currentUser
   const [loading, setLoading] = useState(false);
   const [staffList, setStaffList] = useState([]);
   const [selectedStaff, setSelectedStaff] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [showReview, setShowReview] = useState(false); // 🌟 新增：控制是否显示预览界面
+  const [showReview, setShowReview] = useState(false); 
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     time: '',
@@ -121,12 +131,11 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
     reason: 'System recovery bulk entry'
   });
 
-  // 初始化数据
   useEffect(() => {
     if (isOpen) {
       fetchEligibleStaff();
       setSelectedStaff([]);
-      setShowReview(false); // 每次打开重置为编辑模式
+      setShowReview(false);
     }
   }, [isOpen, formData.date]);
 
@@ -164,7 +173,6 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
     );
   };
 
-  // 🌟 最终提交逻辑
   const handleFinalSubmit = async () => {
     setLoading(true);
     try {
@@ -188,6 +196,16 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
       });
 
       await batch.commit();
+
+      // 🚨 写入审计日志
+      await logAdminAction(db, currentUser, "BULK_MANUAL_ADD_ATTENDANCE", "MULTIPLE", null, {
+        date: formData.date, 
+        time: formData.time, 
+        action: formData.action, 
+        staffCount: selectedStaff.length,
+        remarks: formData.reason
+      });
+
       onSuccess();
       onClose();
     } catch (e) {
@@ -199,7 +217,6 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
 
   if (!isOpen) return null;
 
-  // 🌟 二次确认预览界面 (Review Stage)
   if (showReview) {
     const selectedDetails = staffList.filter(s => selectedStaff.includes(s.id));
     
@@ -263,7 +280,6 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
     );
   }
 
-  // 编辑配置界面 (Edit Stage)
   return (
     <>
       <div className="modal-backdrop fade show"></div>
@@ -275,7 +291,6 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
               <button type="button" className="btn-close" onClick={onClose}></button>
             </div>
             <div className="modal-body p-4 bg-light">
-              {/* 参数设置 */}
               <div className="row g-3 mb-3 bg-white p-3 rounded-3 shadow-sm border">
                 <div className="col-md-4">
                   <label className="small fw-bold text-muted mb-1">Target Date</label>
@@ -297,7 +312,6 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
                 </div>
               </div>
 
-              {/* 员工列表选择区 */}
               <div className="bg-white p-3 rounded-3 shadow-sm border mb-3">
                 <div className="d-flex justify-content-between align-items-center mb-2">
                    <label className="small fw-bold text-dark">Select Staff</label>
@@ -325,7 +339,7 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
                 className="btn btn-warning text-dark fw-bold px-4 shadow-sm" 
                 onClick={() => {
                   if (!formData.action || !formData.time || selectedStaff.length === 0) return alert("Please fill all fields.");
-                  setShowReview(true); // 🌟 进入预览模式
+                  setShowReview(true);
                 }}
               >
                 Review Bulk Add ({selectedStaff.length})
@@ -342,6 +356,7 @@ export function BulkManualActionModal({ isOpen, onClose, onSuccess }) {
 // 3. Admin Manual Action Modal (管理员手动补卡 / 修改状态)
 // ============================================================================
 export function ManualActionModal({ isOpen, onClose, uid, staffName, targetDate, onSuccess }) {
+  const { currentUser } = useAuth(); // 🚨 获取 currentUser
   const [actionType, setActionType] = useState('');
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -363,8 +378,12 @@ export function ManualActionModal({ isOpen, onClose, uid, staffName, targetDate,
       const q = query(collection(db, "attendance"), where("uid", "==", uid), where("date", "==", targetDate));
       const snap = await getDocs(q);
       
+      const oldDataSnapshot = [];
       if (willArchive) {
-        snap.forEach(d => batch.update(d.ref, { verificationStatus: "Archived" }));
+        snap.forEach(d => {
+          oldDataSnapshot.push({id: d.id, ...d.data()});
+          batch.update(d.ref, { verificationStatus: "Archived" });
+        });
       }
 
       const baseRecord = { 
@@ -373,13 +392,19 @@ export function ManualActionModal({ isOpen, onClose, uid, staffName, targetDate,
         remarks: formData.reason 
       };
 
+      let actionCodeForLog = "";
+      let newLogData = {};
+
       if (isSingleAdd) {
         if (!formData.singleTime) throw new Error("Please enter a valid time.");
         const sessionType = actionType.replace('Add ', '');
         const preciseDate = new Date(`${targetDate}T${formData.singleTime}:00`);
-        batch.set(doc(collection(db, "attendance")), { 
+        const newDocData = { 
           ...baseRecord, session: sessionType, timestamp: Timestamp.fromDate(preciseDate)
-        });
+        };
+        batch.set(doc(collection(db, "attendance")), newDocData);
+        actionCodeForLog = actionType.toUpperCase().replace(/ /g, '_');
+        newLogData = newDocData;
       } 
       else if (isFullOverwrite) {
         const times = [
@@ -394,17 +419,26 @@ export function ManualActionModal({ isOpen, onClose, uid, staffName, targetDate,
             });
           }
         });
+        actionCodeForLog = "MANUAL_OVERWRITE_FULL_DAY";
+        newLogData = { times: formData, date: targetDate };
       }
       else if (actionType === 'Absent' || actionType.includes('Leave')) {
-        batch.set(doc(collection(db, "leaves")), {
+        const leaveData = {
           uid, empName: staffName, type: actionType, 
           startDate: targetDate, endDate: targetDate, days: 1, duration: 'Full Day',
           status: 'Approved', reviewedAt: serverTimestamp(),
           reason: formData.reason || `Admin Manual ${actionType}`
-        });
+        };
+        batch.set(doc(collection(db, "leaves")), leaveData);
+        actionCodeForLog = actionType === 'Absent' ? "MANUAL_ATTENDANCE_ABSENT" : "MANUAL_LEAVE_ASSIGN";
+        newLogData = leaveData;
       }
 
       await batch.commit();
+
+      // 🚨 写入单人手工操作审计日志
+      await logAdminAction(db, currentUser, actionCodeForLog, uid, oldDataSnapshot, newLogData);
+
       onSuccess();
       onClose();
     } catch (e) {
@@ -431,6 +465,8 @@ export function ManualActionModal({ isOpen, onClose, uid, staffName, targetDate,
                   <option value="">-- Choose --</option>
                   <optgroup label="Adjustment (Safe)">
                     <option value="Add Clock In">➕ Add Clock In</option>
+                    <option value="Add Break Out">☕ Add Break Out</option>
+                    <option value="Add Break In">💼 Add Break In</option>
                     <option value="Add Clock Out">🚪 Add Clock Out</option>
                   </optgroup>
                   <optgroup label="Overwrite (Replaces Old)">
@@ -472,7 +508,7 @@ export function ManualActionModal({ isOpen, onClose, uid, staffName, targetDate,
 }
 
 // ============================================================================
-// 4. Monthly Report Modal (月度报表)
+// 4. Monthly Report Modal (月度报表) - 不涉及数据库写入
 // ============================================================================
 export function MonthlyReportModal({ isOpen, onClose }) {
   const [users, setUsers] = useState([]);

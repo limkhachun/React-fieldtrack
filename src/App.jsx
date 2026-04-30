@@ -19,12 +19,10 @@ import DailyTasks from './pages/DailyTasks/DailyTasks';
 import LeaveAprroval from './pages/LeaveApproval/LeaveApproval';
 import EvidenceGallery from './pages/EvidenceGallery/EvidenceGallery';
 import SchedulePlanner from './pages/SchedulePlanner/SchedulePlanner';
-/*
+import LiveTrackingMap from './pages/LiveTracking/LiveTracking';
+import PayrollManagement from './pages/Payroll/Payroll';
+import AdminManagement from './pages/ManageAdmins/ManageAdmins';
 
-import PayrollManagement from './pages/PayrollManagement/PayrollManagement';
-import LiveTrackingMap from './pages/LiveTrackingMap/LiveTrackingMap';
-import AdminManagement from './pages/AdminManagement/AdminManagement';
-*/
 function App() {
   return (
     <AuthProvider>
@@ -59,30 +57,21 @@ function App() {
             
             <Route path="schedules" element={<SchedulePlanner />} />
             
-            <Route path="payroll" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Payroll Management Page</h3>
-                <p>正在迁移中...</p>
-              </div>
-            } />
+            <Route path="payroll" element={<PayrollManagement />} />
             
             <Route path="daily-tasks" element={<DailyTasks />} />
             
             <Route path="map" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Live Tracking Map Page</h3>
-                <p>正在迁移中...</p>
-              </div>
+              <LiveTrackingMap />
             } />
             
             <Route path="gallery" element={<EvidenceGallery />} />
 
             {/* 权限管理页面 (仅 Admin 可见) */}
             <Route path="manage-admins" element={
-              <div className="container py-5 text-center text-muted">
-                <h3>Admin Accounts Management</h3>
-                <p>正在迁移中...</p>
-              </div>
+              <ProtectedRoute requiredRole="Admin">
+                <AdminManagement />
+              </ProtectedRoute>
             } />
           </Route>
 

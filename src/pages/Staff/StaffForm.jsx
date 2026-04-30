@@ -1,9 +1,13 @@
 // src/pages/Staff/StaffForm.jsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, serverTimestamp, deleteField } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
+
+// 🚨 导入审计日志函数
+import { logAdminAction } from '../../utils/utils'; 
+
 // 导入需要的图标
 import { Fingerprint, Users, Globe, PhoneCall, Calendar, Briefcase, Clock, PiggyBank, ShieldAlert, Landmark, FolderOpen, Wallet, Building2, Heart, Baby, Save, Download, Upload, ArrowLeft, Home, Plane, Siren, Trash2, Plus } from 'lucide-react';
 
@@ -94,7 +98,6 @@ export default function StaffForm() {
     }));
   };
 
-  // --- 处理 Children 数组逻辑 ---
   const handleAddChild = () => {
     setFormData(prev => ({
       ...prev,
@@ -158,6 +161,10 @@ export default function StaffForm() {
         };
 
         await setDoc(docRef, payload);
+
+        // 🚨 记录新增员工的审计日志
+        await logAdminAction(db, currentUser, "CREATE_USER", empCode, null, payload);
+
         alert("✅ Staff Successfully Added!");
         navigate('/staff');
 
@@ -165,11 +172,15 @@ export default function StaffForm() {
         const payload = {
           ...formData,
           personal: { ...formData.personal, email },
-          status: accountStatus, // 保存更新后的状态
+          status: accountStatus, 
           "meta.updatedAt": serverTimestamp()
         };
 
         await updateDoc(doc(db, "users", id), payload);
+
+        // 🚨 记录修改员工信息的审计日志 (保存了 originalData 作为比对)
+        await logAdminAction(db, currentUser, "EDIT_USER", id, originalData, payload);
+
         alert("Staff details updated successfully!");
       }
     } catch (err) {

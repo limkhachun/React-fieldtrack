@@ -15,6 +15,7 @@ import { ManualActionModal } from './AttendanceModals';
  * @param {function} setBadges - 更新父组件 Tab 上的 Badge 数量
  * @param {function} setUnverifiedRecords - 【关键】同步未验证记录给父组件供批量验证使用
  * @param {boolean} forceShowLogs - 是否强制显示详细记录列表
+ * @param {boolean} hideDetailedRecords - Explicity hide the detailed records section
  */
 export default function DayView({ 
   targetDate, 
@@ -22,7 +23,8 @@ export default function DayView({
   searchTerm, 
   setBadges, 
   setUnverifiedRecords,
-  forceShowLogs = false 
+  forceShowLogs = false,
+  hideDetailedRecords = false // Add this prop
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -55,7 +57,7 @@ export default function DayView({
       const currentDateStr = getLocalTodayStr();
       const searchLower = searchTerm.toLowerCase().trim();
 
-      // 并行获取所有核心数据[cite: 3, 7]
+      // 并行获取所有核心数据[cite: 22]
       const [usersSnap, attSnap, schedSnap, leaveSnap, holSnap] = await Promise.all([
         getDocs(query(collection(db, "users"))),
         getDocs(query(collection(db, "attendance"), where("date", "==", targetDate))),
@@ -70,7 +72,7 @@ export default function DayView({
         holSnap.data().holiday_list.forEach(h => { holidaysMap[h.date] = h.name; });
       }
 
-      // 2. 员工字典处理 (处理 authUid 与 docId 的对应关系)[cite: 3]
+      // 2. 员工字典处理 (处理 authUid 与 docId 的对应关系)[cite: 22]
       const usersMap = {};
       const staffDocIds = new Set();
       const authUidToDocId = {}; 
@@ -96,7 +98,7 @@ export default function DayView({
         }
       });
 
-      // 3. 考勤数据分组[cite: 3, 7]
+      // 3. 考勤数据分组[cite: 22]
       const attendanceMap = {}; 
       let totalUnverifiedCount = 0;
       attSnap.forEach(docSnap => {
@@ -152,7 +154,7 @@ export default function DayView({
           if (r.session === 'Clock Out') outT = formatTime(r.timestamp);
         });
 
-        // 缺勤判断逻辑[cite: 3, 7]
+        // 缺勤判断逻辑[cite: 22]
         const isAbsent = (targetDate <= currentDateStr) && inT === "--:--" && sched && (!leaveType || duration !== 'Full Day') && !isPH; 
         const isMissingOut = inT !== "--:--" && outT === "--:--" && targetDate < currentDateStr;
         const isClockedInToday = inT !== "--:--" && outT === "--:--" && targetDate === currentDateStr;
@@ -174,7 +176,7 @@ export default function DayView({
 
         let finalStatus = isAbsent ? 'absent' : isMissingOut ? 'missingOut' : isClockedInToday ? 'clockedInToday' : (inT !== "--:--" ? 'present' : (leaveType ? 'leave' : (isPH ? 'ph' : 'none')));
 
-        // 过滤处理[cite: 3]
+        // 过滤处理[cite: 22]
         if (searchLower && !user.name.toLowerCase().includes(searchLower) && !user.empCode.toLowerCase().includes(searchLower)) return;
         if (dayStatusFilter !== 'all') {
           if (dayStatusFilter === 'clockedIn' && inT === "--:--") return;
@@ -194,7 +196,7 @@ export default function DayView({
         });
       });
 
-      // 6. 状态同步[cite: 6]
+      // 6. 状态同步[cite: 22]
       const sortedData = processedData.sort((a, b) => b.pendingCount - a.pendingCount || a.name.localeCompare(b.name));
       setAttendanceData(sortedData);
       setStats({ scheduled: scheduledCount, present: presentCount, absent: absentCount, leave: leaveCount });
@@ -203,7 +205,7 @@ export default function DayView({
 
       if (setBadges) setBadges(prev => ({ ...prev, unverified: totalUnverifiedCount }));
 
-      // 【关键修复】同步待验证数据给 Bulk Verify 弹窗[cite: 6]
+      // 【关键修复】同步待验证数据给 Bulk Verify 弹窗[cite: 22]
       // 🚨 修改后的数据同步逻辑：确保记录对象包含 empCode 🚨
 if (setUnverifiedRecords) {
   const allUnverified = sortedData.flatMap(staff => 
@@ -299,98 +301,101 @@ if (setUnverifiedRecords) {
       )}
 
       {/* 详细记录列表区 */}
-      <div className="d-flex flex-column gap-3">
-        {attendanceData.length === 0 ? (
-          <div className="text-center py-5 text-muted fw-bold bg-white rounded shadow-sm border">No records found.</div>
-        ) : (
-          attendanceData.map((staff) => (
-            <div key={staff.uid} className={`card border-0 shadow-sm overflow-hidden ${staff.status === 'absent' ? 'bg-danger bg-opacity-10 border border-danger-subtle' : ''}`}>
-              <div className="card-body p-3 cursor-pointer" onClick={() => toggleRow(staff.uid)}>
-                <div className="row align-items-center">
-                  <div className="col-md-4 d-flex align-items-center gap-3 border-end">
-                    <div className="position-relative">
-                       {staff.photo ? (
-                         <img src={staff.photo} alt="Avatar" className="rounded-circle border" style={{ width: '45px', height: '45px', objectFit: 'cover' }} />
-                       ) : (
-                         <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center fw-bold border" style={{ width: '45px', height: '45px' }}>
-                           {staff.name.charAt(0)}
-                         </div>
-                       )}
-                       {/* 视觉修复：更直观的 Pending 徽章 */}
-                       {staff.pendingCount > 0 && (
-                         <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark border border-white" style={{ fontSize: '0.6rem' }}>
-                           {staff.pendingCount}
-                         </span>
-                       )}
-                    </div>
-                    <div>
-                      <h6 className="fw-bold text-dark m-0 text-truncate" style={{ maxWidth: '150px' }}>{staff.name}</h6>
-                      <small className="text-muted d-block">Shift: {staff.shift}</small>
-                      {staff.leaveDetails && <span className="badge bg-info text-white mt-1" style={{ fontSize: '0.65rem' }}>{staff.leaveDetails}</span>}
-                    </div>
-                  </div>
-                  
-                  <div className="col-md-5 text-center">
-                    <div className="row">
-                      <div className="col-6">
-                        <small className="text-muted fw-bold d-block">IN</small>
-                        <div className={`fw-bold font-monospace fs-5 ${staff.inTime === '--:--' ? 'text-muted' : 'text-dark'}`}>{staff.inTime}</div>
+      {/* Hide the detailed records if hideDetailedRecords is true */}
+      {!hideDetailedRecords && (
+        <div className="d-flex flex-column gap-3 mt-4">
+          {attendanceData.length === 0 ? (
+            <div className="text-center py-5 text-muted fw-bold bg-white rounded shadow-sm border">No records found.</div>
+          ) : (
+            attendanceData.map((staff) => (
+              <div key={staff.uid} className={`card border-0 shadow-sm overflow-hidden ${staff.status === 'absent' ? 'bg-danger bg-opacity-10 border border-danger-subtle' : ''}`}>
+                <div className="card-body p-3 cursor-pointer" onClick={() => toggleRow(staff.uid)}>
+                  <div className="row align-items-center">
+                    <div className="col-md-4 d-flex align-items-center gap-3 border-end">
+                      <div className="position-relative">
+                         {staff.photo ? (
+                           <img src={staff.photo} alt="Avatar" className="rounded-circle border" style={{ width: '45px', height: '45px', objectFit: 'cover' }} />
+                         ) : (
+                           <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center fw-bold border" style={{ width: '45px', height: '45px' }}>
+                             {staff.name.charAt(0)}
+                           </div>
+                         )}
+                         {/* 视觉修复：更直观的 Pending 徽章 */}
+                         {staff.pendingCount > 0 && (
+                           <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark border border-white" style={{ fontSize: '0.6rem' }}>
+                             {staff.pendingCount}
+                           </span>
+                         )}
                       </div>
-                      <div className="col-6">
-                        <small className="text-muted fw-bold d-block">OUT</small>
-                        <div className={`fw-bold font-monospace fs-5 ${staff.outTime === '--:--' ? 'text-muted' : 'text-success'}`}>{staff.outTime}</div>
+                      <div>
+                        <h6 className="fw-bold text-dark m-0 text-truncate" style={{ maxWidth: '150px' }}>{staff.name}</h6>
+                        <small className="text-muted d-block">Shift: {staff.shift}</small>
+                        {staff.leaveDetails && <span className="badge bg-info text-white mt-1" style={{ fontSize: '0.65rem' }}>{staff.leaveDetails}</span>}
                       </div>
                     </div>
-                  </div>
-                  
-                  <div className="col-md-3 text-end d-flex align-items-center justify-content-end gap-2">
-                    <span className={`badge ${staff.inTime !== '--:--' ? 'bg-success' : (staff.status === 'leave' || staff.isPH ? 'bg-info' : 'bg-danger')}`}>
-                      {staff.inTime !== '--:--' ? 'PRESENT' : (staff.status === 'leave' ? 'LEAVE' : (staff.isPH ? 'HOLIDAY' : 'ABSENT'))}
-                    </span>
-                    <button className="btn btn-sm btn-light border shadow-sm" onClick={(e) => { 
-                      e.stopPropagation(); 
-                      setManualModalConfig({ isOpen: true, uid: staff.uid, name: staff.name }); 
-                    }}>
-                      <Settings2 size={16} />
-                    </button>
-                    <ChevronDown size={18} className={`text-muted transition-transform ${expandedRows[staff.uid] ? 'rotate-180' : ''}`} />
+                    
+                    <div className="col-md-5 text-center">
+                      <div className="row">
+                        <div className="col-6">
+                          <small className="text-muted fw-bold d-block">IN</small>
+                          <div className={`fw-bold font-monospace fs-5 ${staff.inTime === '--:--' ? 'text-muted' : 'text-dark'}`}>{staff.inTime}</div>
+                        </div>
+                        <div className="col-6">
+                          <small className="text-muted fw-bold d-block">OUT</small>
+                          <div className={`fw-bold font-monospace fs-5 ${staff.outTime === '--:--' ? 'text-muted' : 'text-success'}`}>{staff.outTime}</div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="col-md-3 text-end d-flex align-items-center justify-content-end gap-2">
+                      <span className={`badge ${staff.inTime !== '--:--' ? 'bg-success' : (staff.status === 'leave' || staff.isPH ? 'bg-info' : 'bg-danger')}`}>
+                        {staff.inTime !== '--:--' ? 'PRESENT' : (staff.status === 'leave' ? 'LEAVE' : (staff.isPH ? 'HOLIDAY' : 'ABSENT'))}
+                      </span>
+                      <button className="btn btn-sm btn-light border shadow-sm" onClick={(e) => { 
+                        e.stopPropagation(); 
+                        setManualModalConfig({ isOpen: true, uid: staff.uid, name: staff.name }); 
+                      }}>
+                        <Settings2 size={16} />
+                      </button>
+                      <ChevronDown size={18} className={`text-muted transition-transform ${expandedRows[staff.uid] ? 'rotate-180' : ''}`} />
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* 展开内容：显示所有 session 类型 */}
-              {expandedRows[staff.uid] && (
-                <div className="list-group list-group-flush border-top bg-light animate__animated animate__fadeIn">
-                  {staff.records.length > 0 ? staff.records.map(record => (
-                    <div key={record.id} className="list-group-item d-flex justify-content-between align-items-center px-4 py-2 bg-transparent">
-                      <div className="small">
-                        <div className="fw-bold text-muted">{record.session}</div>
-                        <div className="fw-bold text-dark fs-6 font-monospace">{formatTime(record.timestamp)}</div>
-                        {record.address === "System Auto Clock Out" && <small className="text-danger d-block">Generated by System</small>}
+                {/* 展开内容：显示所有 session 类型 */}
+                {expandedRows[staff.uid] && (
+                  <div className="list-group list-group-flush border-top bg-light animate__animated animate__fadeIn">
+                    {staff.records.length > 0 ? staff.records.map(record => (
+                      <div key={record.id} className="list-group-item d-flex justify-content-between align-items-center px-4 py-2 bg-transparent">
+                        <div className="small">
+                          <div className="fw-bold text-muted">{record.session}</div>
+                          <div className="fw-bold text-dark fs-6 font-monospace">{formatTime(record.timestamp)}</div>
+                          {record.address === "System Auto Clock Out" && <small className="text-danger d-block">Generated by System</small>}
+                        </div>
+                        <div className="d-flex gap-2">
+                          <span className={`badge bg-opacity-10 border ${record.verificationStatus === 'Verified' ? 'bg-success text-success border-success' : 'bg-warning text-warning border-warning'}`}>
+                            {record.verificationStatus || 'Pending'}
+                          </span>
+                          {record.photoUrl && (
+                            <button className="btn btn-xs btn-outline-info p-1" onClick={(e) => { 
+                              e.stopPropagation(); 
+                              window.open(record.photoUrl); 
+                            }}>
+                              <ImageIcon size={14}/>
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div className="d-flex gap-2">
-                        <span className={`badge bg-opacity-10 border ${record.verificationStatus === 'Verified' ? 'bg-success text-success border-success' : 'bg-warning text-warning border-warning'}`}>
-                          {record.verificationStatus || 'Pending'}
-                        </span>
-                        {record.photoUrl && (
-                          <button className="btn btn-xs btn-outline-info p-1" onClick={(e) => { 
-                            e.stopPropagation(); 
-                            window.open(record.photoUrl); 
-                          }}>
-                            <ImageIcon size={14}/>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )) : (
-                    <div className="p-3 text-center text-muted small bg-white">No punch data recorded.</div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
+                    )) : (
+                      <div className="p-3 text-center text-muted small bg-white">No punch data recorded.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       <ManualActionModal 
         isOpen={manualModalConfig.isOpen}

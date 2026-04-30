@@ -1,8 +1,12 @@
+// src/pages/HolidayManager/HolidayManager.jsx
 import React, { useState, useEffect } from 'react';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, setDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { ArrowLeft, CalendarHeart, Plus, Calendar, Trash2 } from 'lucide-react';
+
+// 🚨 导入审计日志记录函数
+import { logAdminAction } from '../../utils/utils';
 
 export default function HolidayManager() {
   const { currentUser } = useAuth();
@@ -22,7 +26,7 @@ export default function HolidayManager() {
       const docSnap = await getDoc(holidayDocRef);
       if (docSnap.exists()) {
         const list = docSnap.data().holiday_list || [];
-        // 按日期排序[cite: 17]
+        // 按日期排序
         setHolidays(list.sort((a, b) => a.date.localeCompare(b.date)));
       } else {
         setHolidays([]);
@@ -49,6 +53,9 @@ export default function HolidayManager() {
         await updateDoc(holidayDocRef, { holiday_list: arrayUnion(holidayObj) });
       }
 
+      // 🚨 记录添加假期的审计日志
+      await logAdminAction(db, currentUser, "ADD_HOLIDAY", "GLOBAL", null, holidayObj);
+
       setFormData({ name: '', date: '' });
       await loadHolidays();
       alert("Holiday saved successfully!");
@@ -65,6 +72,10 @@ export default function HolidayManager() {
     setLoading(true);
     try {
       await updateDoc(holidayDocRef, { holiday_list: arrayRemove(holidayObj) });
+
+      // 🚨 记录删除假期的审计日志
+      await logAdminAction(db, currentUser, "REMOVE_HOLIDAY", "GLOBAL", holidayObj, null);
+
       await loadHolidays();
     } catch (e) {
       alert(`Error: ${e.message}`);
@@ -131,7 +142,7 @@ export default function HolidayManager() {
                       <Calendar size={12} className="me-1" /> {h.date}
                     </div>
                   </div>
-                  <button className="btn btn-sm btn-outline-danger border-0" onClick={() => handleDeleteHoliday(h)}>
+                  <button className="btn btn-sm btn-outline-danger border-0" onClick={() => handleDeleteHoliday(h)} disabled={loading}>
                     <Trash2 size={16} />
                   </button>
                 </div>

@@ -1,14 +1,24 @@
 // src/pages/LeaveApproval/components/LeaveModals.jsx
 import React, { useState, useEffect } from 'react';
+import { 
+  collection, doc, updateDoc, serverTimestamp, 
+  runTransaction, getDoc 
+} from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '../../../services/firebase';
+import { useAuth } from '../../../context/AuthContext';
 import { Paperclip, XCircle, PlusCircle, Edit, Info, ExternalLink } from 'lucide-react';
 
+// 🚨 导入审计日志记录函数
+import { logAdminAction } from '../../../utils/utils';
+
 // ==========================================
-// Attachment Viewer Modal[cite: 12]
+// 1. Attachment Viewer Modal (附件预览)
 // ==========================================
 export function AttachmentModal({ isOpen, url, fileType, onClose }) {
   if (!isOpen) return null;
 
-  const isPdf = fileType?.toLowerCase() === 'pdf' || url?.toLowerCase().includes('.pdf?alt=media'); // PDF check logic[cite: 13]
+  const isPdf = fileType?.toLowerCase() === 'pdf' || url?.toLowerCase().includes('.pdf?alt=media');
 
   return (
     <>
@@ -42,21 +52,39 @@ export function AttachmentModal({ isOpen, url, fileType, onClose }) {
 }
 
 // ==========================================
-// Reject Leave Modal[cite: 12]
+// 2. Reject Leave Modal (拒绝假单)
 // ==========================================
 export function RejectModal({ isOpen, leaveId, uid, onClose }) {
+  const { currentUser } = useAuth();
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
 
   const handleReject = async () => {
-    if (!reason.trim()) return alert("Please provide a reason for rejection."); // Validation[cite: 13]
+    if (!reason.trim()) return alert("Please provide a reason for rejection.");
+    
     setLoading(true);
-    // TODO: Implement the updateDoc and logAdminAction logic here from[cite: 13]
-    console.log("Rejecting:", { leaveId, uid, reason });
-    setLoading(false);
-    onClose();
+    try {
+      // 1. 更新数据库状态
+      await updateDoc(doc(db, "leaves", leaveId), {
+        status: 'Rejected',
+        rejectionReason: reason,
+        reviewedAt: serverTimestamp(),
+        reviewer: currentUser.email
+      });
+
+      // 2. 写入审计日志
+      await logAdminAction(db, currentUser, "REJECT_LEAVE", uid, { leaveId: leaveId }, { reason: reason });
+
+      alert('Leave request rejected.');
+      setReason('');
+      onClose();
+    } catch (e) {
+      alert(`Failed: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -93,29 +121,77 @@ export function RejectModal({ isOpen, leaveId, uid, onClose }) {
 }
 
 // ==========================================
-// Edit Status Modal[cite: 12]
+// 3. Edit Status Modal (修改已审批假单的状态)
 // ==========================================
 export function EditStatusModal({ isOpen, leaveId, uid, currentStatus, initialReason, onClose }) {
+  const { currentUser } = useAuth();
   const [status, setStatus] = useState(currentStatus);
-  const [reason, setReason] = useState(initialReason);
+  const [reason, setReason] = useState(initialReason || '');
   const [loading, setLoading] = useState(false);
 
-  // Sync initial state when modal opens
+  // 当弹窗打开时，同步初始状态
   useEffect(() => {
     if (isOpen) {
       setStatus(currentStatus);
-      setReason(initialReason);
+      setReason(initialReason || '');
     }
   }, [isOpen, currentStatus, initialReason]);
 
   if (!isOpen) return null;
 
   const handleSubmit = async () => {
+    if (status === currentStatus) return onClose(); // 状态未改变直接关闭
+    if (status === 'Rejected' && !reason.trim()) return alert("Please provide a rejection reason.");
+
     setLoading(true);
-    // TODO: Implement the runTransaction logic here from window.submitStatusChange[cite: 13]
-    console.log("Updating Status:", { leaveId, uid, status, reason });
-    setLoading(false);
-    onClose();
+    try {
+      await runTransaction(db, async (transaction) => {
+        const leaveRef = doc(db, "leaves", leaveId);
+        const leaveSnap = await transaction.get(leaveRef);
+        const leaveData = leaveSnap.data();
+        
+        const isAnnual = (leaveData.type === 'Annual Leave' || leaveData.type === '年假');
+        let actualDeductibleDays = leaveData.deductibleDays !== undefined ? leaveData.deductibleDays : leaveData.days;
+
+        // 状态反转的年假余额退还/扣除逻辑
+        if (leaveData.status === 'Approved' && status !== 'Approved' && isAnnual) {
+            // 如果原本是批准，现在改为拒绝或待定，退还年假
+            const userRef = doc(db, "users", uid);
+            const userDoc = await transaction.get(userRef);
+            const currentBal = userDoc.data().leave_balance?.annual || 0;
+            transaction.update(userRef, { "leave_balance.annual": currentBal + actualDeductibleDays });
+        } else if (leaveData.status !== 'Approved' && status === 'Approved' && isAnnual) {
+            // 如果原本是拒绝或待定，现在改为批准，扣除年假
+            const userRef = doc(db, "users", uid);
+            const userDoc = await transaction.get(userRef);
+            const currentBal = userDoc.data().leave_balance?.annual || 0;
+            if (currentBal < actualDeductibleDays) throw new Error("Insufficient Balance for this reversal!");
+            transaction.update(userRef, { "leave_balance.annual": currentBal - actualDeductibleDays });
+        }
+
+        let updatePayload = {
+            status: status,
+            reviewedAt: serverTimestamp(),
+            reviewer: currentUser.email,
+        };
+        
+        if (status === 'Rejected') {
+            updatePayload.rejectionReason = reason;
+        }
+
+        transaction.update(leaveRef, updatePayload);
+
+        // 写入状态修改的审计日志
+        logAdminAction(db, currentUser, "EDIT_LEAVE_STATUS", uid, { oldStatus: leaveData.status }, updatePayload);
+      });
+
+      alert('Status updated successfully.');
+      onClose();
+    } catch (e) {
+      alert(`Failed to update: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -137,8 +213,8 @@ export function EditStatusModal({ isOpen, leaveId, uid, currentStatus, initialRe
                   <option value="Pending">Revert to Pending</option>
                 </select>
               </div>
-              {status === 'Rejected' && ( // Toggle reason field visibility[cite: 13]
-                <div>
+              {status === 'Rejected' && (
+                <div className="animate__animated animate__fadeIn">
                   <label className="form-label small fw-bold text-dark">Reason (if Rejected)</label>
                   <textarea className="form-control" rows="2" value={reason} onChange={(e) => setReason(e.target.value)} />
                 </div>
@@ -157,10 +233,11 @@ export function EditStatusModal({ isOpen, leaveId, uid, currentStatus, initialRe
   );
 }
 
-// ==========================================
-// Add Leave Manually Modal[cite: 12]
-// ==========================================
+// ============================================================================
+// 4. Add Leave Manually Modal (管理员手工代请假)
+// ============================================================================
 export function AddLeaveModal({ isOpen, usersMap, holidaysMap, onClose }) {
+  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     staffId: '',
@@ -176,24 +253,118 @@ export function AddLeaveModal({ isOpen, usersMap, holidaysMap, onClose }) {
 
   const usersList = Object.values(usersMap).sort((a, b) => a.name.localeCompare(b.name));
   
-  // Logic to determine if duration group should be visible[cite: 13]
+  // 检查是否为同一天，决定是否显示半天假选项
   const isSingleDay = formData.start && formData.end && formData.start === formData.end;
 
   const handleSubmit = async () => {
     if (!formData.staffId || !formData.start || !formData.end) {
       return alert("Please fill in all required fields.");
     }
+    
     const sDate = new Date(formData.start);
     const eDate = new Date(formData.end);
     if (eDate < sDate) {
-      return alert("End date cannot be earlier than start date."); // Validation[cite: 13]
+      return alert("End date cannot be earlier than start date.");
     }
 
+    // 计算请假天数
+    let days = Math.round((eDate - sDate) / (1000 * 60 * 60 * 24)) + 1;
+    if (isSingleDay && formData.duration !== 'Full Day') {
+        days = 0.5;
+    }
+
+    const selectedUser = usersMap[formData.staffId];
+    if (!window.confirm(`Add ${days} day(s) of ${formData.type} for ${selectedUser.name}?`)) return;
+
     setLoading(true);
-    // TODO: Implement the file upload and runTransaction logic from window.submitAddLeave[cite: 13]
-    console.log("Submitting New Leave:", formData);
-    setLoading(false);
-    onClose();
+
+    try {
+      let attachmentUrl = null;
+      let fileType = null;
+
+      // 1. 若有附件则先上传
+      if (formData.file) {
+        const ext = formData.file.name.split('.').pop().toLowerCase();
+        const targetUid = selectedUser.authUid || formData.staffId;
+        const fileName = `${Date.now()}_${targetUid}.${ext}`;
+        const fileRef = storageRef(storage, `leave_attachments/${targetUid}/${fileName}`);
+        
+        await uploadBytes(fileRef, formData.file);
+        attachmentUrl = await getDownloadURL(fileRef);
+        fileType = ext;
+      }
+
+      // 2. 计算公共假期重叠天数 (简化计算，基于 holidaysMap)
+      let phOverlap = 0;
+      let curr = new Date(sDate);
+      while (curr <= eDate) {
+          const dateStr = curr.toISOString().split('T')[0];
+          if (holidaysMap[dateStr]) phOverlap++;
+          curr.setDate(curr.getDate() + 1);
+      }
+      const actualDeductibleDays = Math.max(0, days - phOverlap);
+
+      // 3. 事务处理
+      await runTransaction(db, async (transaction) => {
+        const userRef = doc(db, "users", formData.staffId);
+        const userDoc = await transaction.get(userRef);
+        
+        let oldBalance = 0;
+        if (formData.type === 'Annual Leave' && actualDeductibleDays > 0) {
+            oldBalance = userDoc.data().leave_balance?.annual || 0;
+            if (oldBalance < actualDeductibleDays) {
+                throw new Error(`Insufficient Annual Leave Balance! Current: ${oldBalance}, Required: ${actualDeductibleDays}`);
+            }
+            transaction.update(userRef, { "leave_balance.annual": oldBalance - actualDeductibleDays });
+        }
+
+        const newLeaveRef = doc(collection(db, "leaves"));
+        const leaveData = {
+            uid: formData.staffId,
+            authUid: selectedUser.authUid,
+            empName: selectedUser.name,
+            email: selectedUser.email,
+            type: formData.type,
+            startDate: formData.start,
+            endDate: formData.end,
+            days: days,
+            duration: formData.duration,
+            deductibleDays: actualDeductibleDays, 
+            phOverlap: phOverlap, 
+            reason: formData.reason || "Added by Admin",
+            status: 'Approved',
+            appliedAt: serverTimestamp(),
+            reviewedAt: serverTimestamp(),
+            reviewer: currentUser.email,
+            isPayrollDeductible: (formData.type === 'Unpaid Leave')
+        };
+
+        if (attachmentUrl) {
+            leaveData.attachmentUrl = attachmentUrl;
+            leaveData.fileType = fileType;
+        }
+        
+        transaction.set(newLeaveRef, leaveData);
+
+        // 写入手工添加假单的审计日志
+        logAdminAction(db, currentUser, "MANUAL_ADD_LEAVE", formData.staffId, 
+            { oldBalance: oldBalance }, 
+            leaveData
+        );
+      });
+
+      let msg = 'Leave manually added and approved successfully.';
+      if (phOverlap > 0) msg += `\n(Overlapped with ${phOverlap} Public Holiday(s), deduction reduced.)`;
+      alert(msg);
+      
+      // 清空表单
+      setFormData({ staffId: '', type: 'Annual Leave', start: '', end: '', duration: 'Full Day', reason: '', file: null });
+      onClose();
+    } catch (e) {
+      alert(`Failed: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -233,7 +404,7 @@ export function AddLeaveModal({ isOpen, usersMap, holidaysMap, onClose }) {
                 </div>
               </div>
 
-              {isSingleDay && ( // Conditional rendering based on single day check[cite: 13]
+              {isSingleDay && (
                 <div className="mb-3 animate__animated animate__fadeIn">
                   <label className="form-label small fw-bold text-dark">Duration (时长)</label>
                   <select className="form-select border-success fw-bold" value={formData.duration} onChange={(e) => setFormData({ ...formData, duration: e.target.value })}>

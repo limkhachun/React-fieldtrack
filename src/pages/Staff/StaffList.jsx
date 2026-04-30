@@ -5,6 +5,9 @@ import { db } from '../../services/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { Link } from 'react-router-dom';
 
+// 🚨 导入审计日志函数
+import { logAdminAction } from '../../utils/utils'; 
+
 // 导入图标
 import { Search, Plus, ChevronRight, Settings, RefreshCw, Bell, Info, Trash2 } from 'lucide-react';
 
@@ -36,7 +39,6 @@ export default function StaffList() {
   // 1. Data Fetching (Listeners)
   // ----------------------------------------------------
   useEffect(() => {
-    // 监听非 Manager 员工列表
     const staffQuery = query(collection(db, "users"));
     const unsubStaff = onSnapshot(staffQuery, (snapshot) => {
       const users = [];
@@ -62,7 +64,6 @@ export default function StaffList() {
       setLoading(false);
     });
 
-    // 监听待处理的解锁请求
     const reqQuery = query(collection(db, "edit_requests"), where("status", "==", "pending"));
     const unsubReq = onSnapshot(reqQuery, (snap) => {
       const requests = {};
@@ -99,11 +100,19 @@ export default function StaffList() {
 
       if(decision === 'approve') {
           await updateDoc(doc(db, "edit_requests", reqId), { status: 'approved', reviewedAt: serverTimestamp() });
-          const expiryDate = new Date(Date.now() + 5 * 60 * 1000); // 5分钟有效期
+          const expiryDate = new Date(Date.now() + 5 * 60 * 1000); 
           await updateDoc(doc(db, "users", userId), { status: 'editable', unlockExpiresAt: expiryDate });
+          
+          // 🚨 记录解锁请求通过
+          await logAdminAction(db, currentUser, "APPROVE_UNLOCK_REQUEST", userId, null, { action: 'Granted 5 mins edit access' });
+
           alert('Request Approved. Profile unlocked for 5 minutes.');
       } else {
           await updateDoc(doc(db, "edit_requests", reqId), { status: 'rejected', reviewedAt: serverTimestamp() });
+          
+          // 🚨 记录解锁请求拒绝
+          await logAdminAction(db, currentUser, "REJECT_UNLOCK_REQUEST", userId, null, { action: 'Denied edit access' });
+
           alert('Request Rejected.');
       }
       setReviewModalOpen(false);
@@ -126,7 +135,6 @@ export default function StaffList() {
       if (snap.exists() && snap.data().annual) {
         setLeaveRules(snap.data());
       } else {
-        // 默认规则
         setLeaveRules({
           annual: [ {min: 0, max: 2, days: 8}, {min: 2, max: 5, days: 12}, {min: 5, max: 99, days: 16} ],
           medical: [ {min: 0, max: 2, days: 14}, {min: 2, max: 5, days: 18}, {min: 5, max: 99, days: 22} ]
@@ -140,10 +148,7 @@ export default function StaffList() {
   };
 
   const handleAddRuleRow = (type) => {
-    setLeaveRules(prev => ({
-      ...prev,
-      [type]: [...prev[type], { min: 0, max: 1, days: 0 }]
-    }));
+    setLeaveRules(prev => ({ ...prev, [type]: [...prev[type], { min: 0, max: 1, days: 0 }] }));
   };
 
   const handleRemoveRuleRow = (type, index) => {
@@ -165,12 +170,10 @@ export default function StaffList() {
   const handleSaveLeaveRules = async () => {
     setActionLoading(true);
     try {
-      // 简单验证：每个分类至少需要一条规则
       if (leaveRules.annual.length === 0 || leaveRules.medical.length === 0) {
         throw new Error("Both Annual and Medical must have at least one rule tier.");
       }
 
-      // 验证逻辑 (可选：进一步检查是否有重叠/排序)
       const validateArr = (arr) => {
          const sorted = [...arr].sort((a,b) => a.min - b.min);
          for(let i=0; i<sorted.length; i++) {
@@ -188,6 +191,10 @@ export default function StaffList() {
       };
 
       await setDoc(doc(db, "settings", "leave_rules"), finalRules);
+
+      // 🚨 记录全局请假规则变更
+      await logAdminAction(db, currentUser, "UPDATE_LEAVE_RULES", "GLOBAL", null, finalRules);
+
       alert("✅ Leave Rules saved successfully!");
       setRulesModalOpen(false);
     } catch (e) {
@@ -212,7 +219,6 @@ export default function StaffList() {
       if (!ruleSnap.exists()) throw new Error("Leave rules are missing. Please configure rules first.");
       const rules = ruleSnap.data();
       
-      // 提取本年度 Approved 状态的所有请假记录，按员工统计已用天数
       const leavesQ = query(collection(db, "leaves"), where("status", "==", "Approved"), where("startDate", ">=", startOfYear));
       const leaveSnaps = await getDocs(leavesQ);
       const usedMap = {}; 
@@ -231,14 +237,13 @@ export default function StaffList() {
           return rule ? rule.days : 0; 
       };
 
-      // 获取员工开始批量计算
       const staffSnap = await getDocs(query(collection(db, "users")));
       const batch = writeBatch(db);
       let count = 0;
 
       staffSnap.forEach((docSnap) => {
           const d = docSnap.data();
-          if (d.role === 'manager') return; // 跳过 Manager
+          if (d.role === 'manager') return; 
           
           if (d.employment && d.employment.joinDate) {
               const yrs = (new Date() - new Date(d.employment.joinDate)) / (1000 * 60 * 60 * 24 * 365.25);
@@ -261,6 +266,10 @@ export default function StaffList() {
       });
 
       await batch.commit();
+
+      // 🚨 记录批量重算操作
+      await logAdminAction(db, currentUser, "BATCH_RECALCULATE_LEAVE", "MULTIPLE", null, { staffCount: count, targetYear: currentYear });
+
       alert(`✅ Successfully recalculated balances for ${count} staff.`);
     } catch (e) {
       alert(`Error during recalculation: ${e.message}`);

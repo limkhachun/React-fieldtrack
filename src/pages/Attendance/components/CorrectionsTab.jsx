@@ -6,8 +6,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../../services/firebase';
 import { useAuth } from '../../../context/AuthContext';
-// 确保导入所有用到的图标
 import { Check, X, Image as ImageIcon, AlertCircle } from 'lucide-react';
+
+// 🚨 导入审计日志记录函数
+import { logAdminAction } from '../../../utils/utils';
 
 export default function CorrectionsTab({ setBadges }) {
   const { currentUser } = useAuth();
@@ -15,9 +17,6 @@ export default function CorrectionsTab({ setBadges }) {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
-  // ==========================================
-  // 1. 监听待处理的修改请求
-  // ==========================================
   useEffect(() => {
     const q = query(collection(db, "attendance_corrections"), where("status", "==", "Pending"));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -27,7 +26,6 @@ export default function CorrectionsTab({ setBadges }) {
       });
       setCorrections(reqs);
       
-      // 更新父组件(Attendance.jsx) 的 badge 数量
       if (setBadges) {
         setBadges(prev => ({ ...prev, corrections: reqs.length }));
       }
@@ -40,9 +38,6 @@ export default function CorrectionsTab({ setBadges }) {
     return () => unsubscribe();
   }, [setBadges]);
 
-  // ==========================================
-  // 2. 审批操作处理 (Approve / Reject)
-  // ==========================================
   const handleDecision = async (reqData, decision) => {
     if (!window.confirm(`Confirm ${decision} this correction request?`)) return;
     
@@ -53,20 +48,17 @@ export default function CorrectionsTab({ setBadges }) {
       if (decision === 'approve') {
         const batch = writeBatch(db);
         
-        // 1. 更新请求状态为 Approved
         batch.update(correctionRef, { 
           status: "Approved", 
           reviewedAt: serverTimestamp(), 
           reviewer: currentUser.email 
         });
         
-        // 2. 找到当天的旧打卡记录，并将其归档 (Archived)
         const q = query(collection(db, "attendance"), where("uid", "==", reqData.uid), where("date", "==", reqData.targetDate));
         const oldAttSnap = await getDocs(q);
         
         oldAttSnap.forEach(d => {
             const sessionType = d.data().session;
-            // 仅归档 In 和 Out，避免误删 Break 记录
             if (sessionType === 'Clock In' || sessionType === 'Clock Out') {
                 batch.update(d.ref, { verificationStatus: "Archived" });
             }
@@ -81,7 +73,6 @@ export default function CorrectionsTab({ setBadges }) {
             address: "Approved Correction Request",
         };
 
-        // 3. 写入新的 Clock In 记录
         if (reqData.requestedIn && reqData.requestedIn !== '--:--' && reqData.requestedIn !== '-') {
             const preciseInDate = new Date(`${reqData.targetDate}T${reqData.requestedIn}:00`);
             const inRef = doc(collection(db, "attendance"));
@@ -92,7 +83,6 @@ export default function CorrectionsTab({ setBadges }) {
             });
         }
 
-        // 4. 写入新的 Clock Out 记录
         if (reqData.requestedOut && reqData.requestedOut !== '--:--' && reqData.requestedOut !== '-') {
             const preciseOutDate = new Date(`${reqData.targetDate}T${reqData.requestedOut}:00`);
             const outRef = doc(collection(db, "attendance"));
@@ -104,16 +94,22 @@ export default function CorrectionsTab({ setBadges }) {
         }
 
         await batch.commit();
-        // 如果有独立的 logAdminAction 封装可以放这里
+
+        // 🚨 记录审批通过日志
+        await logAdminAction(db, currentUser, "CORRECTION_APPROVE", reqData.uid, null, reqData);
+
         alert('Correction approved and attendance updated successfully.');
 
       } else {
-        // Reject 逻辑：直接更新状态为 Rejected
         await updateDoc(correctionRef, { 
           status: "Rejected", 
           reviewedAt: serverTimestamp(), 
           reviewer: currentUser.email 
         });
+
+        // 🚨 记录审批拒绝日志
+        await logAdminAction(db, currentUser, "CORRECTION_REJECT", reqData.uid, null, reqData);
+
         alert('Correction request rejected.');
       }
     } catch (e) {
@@ -124,9 +120,6 @@ export default function CorrectionsTab({ setBadges }) {
     }
   };
 
-  // ==========================================
-  // 3. UI 渲染
-  // ==========================================
   if (loading) {
     return (
       <div className="text-center py-5 my-5">
